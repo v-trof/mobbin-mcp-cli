@@ -132,16 +132,16 @@ export async function login({ stdin = process.stdin, stdout = process.stdout, br
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const address = server.address();
   const redirectUri = `http://127.0.0.1:${address.port}/callback`;
-  const client = await registerClient(metadata, redirectUri, fetchImpl);
-  const authorizationUrl = new URL(metadata.authorization_endpoint);
-  authorizationUrl.search = new URLSearchParams({
-    response_type: 'code', client_id: client.client_id, state,
-    code_challenge: pkceChallenge(verifier), code_challenge_method: 'S256',
-    redirect_uri: redirectUri, scope: 'openid offline_access', resource: RESOURCE_URL
-  }).toString();
-  stdout.write(`Authorize Mobbin by opening this URL in your browser:\n${authorizationUrl}\n`);
-  browser(authorizationUrl.toString());
   try {
+    const client = await registerClient(metadata, redirectUri, fetchImpl);
+    const authorizationUrl = new URL(metadata.authorization_endpoint);
+    authorizationUrl.search = new URLSearchParams({
+      response_type: 'code', client_id: client.client_id, state,
+      code_challenge: pkceChallenge(verifier), code_challenge_method: 'S256',
+      redirect_uri: redirectUri, scope: 'openid offline_access', resource: RESOURCE_URL
+    }).toString();
+    stdout.write(`Authorize Mobbin by opening this URL in your browser:\n${authorizationUrl}\n`);
+    browser(authorizationUrl.toString());
     const callback = await waitForCallback(server, timeoutMs);
     if (callback.error) throw new MobbinError(`Mobbin authorization failed: ${callback.error_description || callback.error}`);
     if (callback.state !== state) throw new MobbinError('Mobbin authorization state did not match.');
