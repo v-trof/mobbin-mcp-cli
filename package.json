@@ -1,0 +1,35 @@
+{
+  "name": "mobbin-mcp-cli",
+  "version": "0.1.0",
+  "description": "A focused command-line client for Mobbin MCP design research.",
+  "type": "module",
+  "bin": {
+    "mobbin": "bin/mobbin.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/cli.js",
+    "validate:skill": "python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skill"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/v-trof/mobbin-mcp-cli.git"
+  },
+  "keywords": [
+    "mobbin",
+    "mcp",
+    "design-research",
+    "cli"
+  ],
+  "license": "MIT"
+}
