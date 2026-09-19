@@ -1,6 +1,6 @@
 const DEFAULT_URL = 'https://api.mobbin.com/mcp';
 const CLIENT_NAME = 'mobbin-mcp-cli';
-const CLIENT_VERSION = '0.1.0';
+const CLIENT_VERSION = '0.2.0';
 
 export class MobbinError extends Error {
   constructor(message, { status, cause } = {}) {
@@ -37,11 +37,25 @@ async function readResponse(response) {
   try { return JSON.parse(text); } catch { return { raw: text }; }
 }
 
+function retryAfterMs(response, attempt) {
+  const value = response.headers.get('retry-after');
+  if (value) {
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const timestamp = Date.parse(value);
+    if (Number.isFinite(timestamp)) return Math.max(0, timestamp - Date.now());
+  }
+  return Math.min(60_000, 1_000 * 2 ** attempt);
+}
+
 export class McpClient {
-  constructor({ url = DEFAULT_URL, token, fetchImpl = globalThis.fetch } = {}) {
+  constructor({ url = DEFAULT_URL, token, fetchImpl = globalThis.fetch, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), random = Math.random, maxRetries = 2 } = {}) {
     this.url = url;
     this.token = token;
     this.fetch = fetchImpl;
+    this.sleep = sleep;
+    this.random = random;
+    this.maxRetries = maxRetries;
     this.requestId = 0;
     this.sessionId = undefined;
     this.initialized = false;
@@ -62,7 +76,7 @@ export class McpClient {
   async notify(method, params = {}) {
     const headers = this.headers();
     headers.set('Accept', 'application/json, text/event-stream');
-    const response = await this.fetch(this.url, {
+    const response = await this.fetchWithRetry({
       method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', method, params })
     });
     if (!response.ok && response.status !== 202) throw await this.httpError(response);
@@ -72,7 +86,7 @@ export class McpClient {
     const id = ++this.requestId;
     const headers = this.headers();
     headers.set('Accept', 'application/json, text/event-stream');
-    const response = await this.fetch(this.url, {
+    const response = await this.fetchWithRetry({
       method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method, params })
     });
     if (initialize) this.sessionId = response.headers.get('mcp-session-id') ?? undefined;
@@ -82,6 +96,15 @@ export class McpClient {
       throw new MobbinError(`Unexpected MCP response id: ${payload.id}`);
     }
     return payload;
+  }
+
+  async fetchWithRetry(init) {
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await this.fetch(this.url, init);
+      if (response.status !== 429 || attempt >= this.maxRetries) return response;
+      const jitter = Math.round(this.random() * 100);
+      await this.sleep(Math.min(60_000, retryAfterMs(response, attempt) + jitter));
+    }
   }
 
   async callTool(name, arguments_ = {}) {
@@ -110,7 +133,8 @@ export class McpClient {
   }
 }
 
-export function extractToolPayload(result) {
+export function extractToolPayload(result, { preserveResponse = false } = {}) {
+  if (preserveResponse) return result;
   if (result?.structuredContent !== undefined) return result.structuredContent;
   const text = result?.content?.find((item) => item.type === 'text')?.text;
   if (text === undefined) return result;

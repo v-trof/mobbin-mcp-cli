@@ -16,7 +16,7 @@ Use Mobbin as evidence before substantial design work. Search the relevant refer
 ## Workflow
 
 1. Write a short brief: audience, user goal, platform, desired tone, constraints, and the decision to make.
-2. Search the most relevant layer with a specific natural-language query. Include platform, product category, or state in the query when useful.
+2. Search the most relevant layer with a specific natural-language query. For screens and flows, pass the required `--platform ios` or `--platform web`; do not pass platform as prose. Include product category or state in the query when useful, and name a specific app in the query when filtering to that app.
 3. Review multiple strong results and identify shared patterns plus one distinctive direction.
 4. Lock a direction before implementation: preserve the chosen traits, define what is borrowed, and record why each major decision fits the brief.
 5. Build the design without cloning a single source.
@@ -31,11 +31,13 @@ Use Mobbin as evidence before substantial design work. Search the relevant refer
 | Search website sections | `search_sections` | `mobbin search sections "..."` |
 | Call a newly added/advanced tool | any tool name | `mobbin call <tool> --args '{...}'` |
 
-Add `--json` for scripts and structured inspection. Mobbin returns images and metadata inline in MCP responses; the CLI preserves the server payload for JSON consumers.
+Useful search options are `--limit`, `--page`, `--mode` (screens), repeated `--exclude-screen-id` (screens), `--image-format webp|jpg`, and `--task-intent`. Use `--json` for the complete MCP response. The structured payload uses `screens`, `flows`, or `sections`, with `page` and `has_next_page` for paginated results.
+
+Mobbin returns low-resolution preview images inline and a high-resolution `image_url` in result metadata. Use `image_url` when exporting or embedding a reference; URLs expire after 30 days. Cite each reference with its canonical `mobbin_url`. The CLI preserves inline image blocks in `--json` output, while normal output focuses on structured text.
 
 ## Authentication
 
-Run `mobbin auth login` for the browser-based OAuth flow. Credentials are stored in the per-user config directory and refreshed when a refresh token is available. For CI, use `MOBBIN_TOKEN` or `mobbin ... --token <token>`. Never commit credentials.
+Run `mobbin auth login` for the browser-based OAuth flow. The CLI discovers Mobbin's protected-resource and authorization-server metadata, registers a public client dynamically, uses PKCE with the `openid` scope, and refreshes credentials when a refresh token is available. For CI, use `MOBBIN_TOKEN` or `mobbin ... --token <token>`. Never commit credentials or print bearer tokens.
 
 ## Guardrails
 
@@ -43,3 +45,4 @@ Run `mobbin auth login` for the browser-based OAuth flow. Credentials are stored
 - Treat screenshots as evidence for patterns, not as assets to redistribute.
 - Preserve the role of important tokens and media treatments when adapting a reference.
 - If the search is sparse, broaden the query or use another reference layer instead of inventing unsupported product behavior.
+- Respect Mobbin's rate limit and allow the CLI to honor `Retry-After` responses.

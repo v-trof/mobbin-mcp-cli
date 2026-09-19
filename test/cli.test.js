@@ -11,6 +11,9 @@ test('parses positional arguments and long options', () => {
   const parsed = parseArgs(['search', 'screens', 'pricing', 'page', '--platform', 'web', '--json']);
   assert.deepEqual(parsed.positional, ['search', 'screens', 'pricing', 'page']);
   assert.deepEqual(parsed.options, { platform: 'web', json: true });
+  assert.deepEqual(parseArgs(['search', 'screens', 'x', '--platform', 'ios', '--exclude-screen-id', 'a', '--exclude-screen-id=b']).options, {
+    platform: 'ios', 'exclude-screen-id': ['a', 'b']
+  });
 });
 
 test('returns the bundled agent skill without a network request', async () => {
@@ -19,12 +22,16 @@ test('returns the bundled agent skill without a network request', async () => {
   assert.match(stdout.output, /^---\nname: mobbin-design/);
   assert.match(stdout.output, /mobbin search screens/);
   assert.match(stdout.output, /synthesize a distinct result/);
+  assert.match(stdout.output, /image-format/);
+  assert.match(stdout.output, /mobbin_url/);
 });
 
 test('extracts structured content, JSON text, and plain text', () => {
   assert.deepEqual(extractToolPayload({ structuredContent: { ok: true } }), { ok: true });
   assert.deepEqual(extractToolPayload({ content: [{ type: 'text', text: '{"ok":true}' }] }), { ok: true });
   assert.equal(extractToolPayload({ content: [{ type: 'text', text: '# Screen' }] }), '# Screen');
+  const response = { structuredContent: { screens: [] }, content: [{ type: 'image', mimeType: 'image/webp', data: 'encoded' }] };
+  assert.deepEqual(extractToolPayload(response, { preserveResponse: true }), response);
 });
 
 test('initializes an MCP session and calls an official Mobbin tool', async () => {
@@ -56,13 +63,42 @@ test('maps the documented search commands and generic call', async () => {
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{}' }] } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
   };
   const stdout = { output: '', write(value) { this.output += value; } };
-  await run(['search', 'screens', 'pricing page', '--platform', 'web', '--app', 'Stripe'], { fetchImpl, stdout, promptOnMissingToken: false });
-  await run(['search', 'flows', 'signup onboarding'], { fetchImpl, stdout, promptOnMissingToken: false });
-  await run(['search', 'sections', 'hero section'], { fetchImpl, stdout, promptOnMissingToken: false });
-  await run(['call', 'search_screens', '--args', '{"query":"empty state"}', '--json'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['search', 'screens', 'pricing page', '--platform', 'web', '--mode', 'standard', '--limit', '12', '--exclude-screen-id', 'screen-a', '--image-format', 'jpg', '--task-intent', 'Choose a pricing direction'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['search', 'flows', 'signup onboarding', '--platform', 'ios', '--page', '2', '--limit', '3'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['search', 'sections', 'hero section', '--page', '2', '--limit', '4', '--image-format', 'webp'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['call', 'search_screens', '--args', '{"query":"empty state","platform":"ios"}', '--json'], { fetchImpl, stdout, promptOnMissingToken: false });
   assert.deepEqual(calls.map(({ name }) => name), ['search_screens', 'search_flows', 'search_sections', 'search_screens']);
-  assert.deepEqual(calls[0].arguments, { query: 'pricing page', platform: 'web', app: 'Stripe' });
-  assert.deepEqual(calls[3].arguments, { query: 'empty state' });
+  assert.deepEqual(calls[0].arguments, { query: 'pricing page', platform: 'web', mode: 'standard', exclude_screen_ids: ['screen-a'], limit: 12, image_format: 'jpg', task_intent: 'Choose a pricing direction' });
+  assert.deepEqual(calls[1].arguments, { query: 'signup onboarding', platform: 'ios', limit: 3, page: 2 });
+  assert.deepEqual(calls[2].arguments, { query: 'hero section', limit: 4, page: 2, image_format: 'webp' });
+  assert.deepEqual(calls[3].arguments, { query: 'empty state', platform: 'ios' });
+});
+
+test('preserves inline media in JSON output', async () => {
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { structuredContent: { screens: [] }, content: [{ type: 'text', text: '{"screens":[]}' }, { type: 'image', mimeType: 'image/webp', data: 'encoded' }] } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
+  };
+  const stdout = { output: '', write(value) { this.output += value; } };
+  await run(['call', 'search_screens', '--json'], { fetchImpl, stdout, promptOnMissingToken: false });
+  const payload = JSON.parse(stdout.output);
+  assert.deepEqual(payload.structuredContent, { screens: [] });
+  assert.equal(payload.content[1].mimeType, 'image/webp');
+});
+
+test('retries rate-limited MCP requests using Retry-After', async () => {
+  const waits = [];
+  let toolAttempts = 0;
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (body.method === 'tools/call' && toolAttempts++ === 0) return new Response('{"error":"slow down"}', { status: 429, headers: { 'retry-after': '0' } });
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{"ok":true}' }] } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
+  };
+  const client = new McpClient({ fetchImpl, sleep: async (ms) => waits.push(ms), random: () => 0 });
+  assert.deepEqual(extractToolPayload(await client.callTool('search_sections', { query: 'pricing' })), { ok: true });
+  assert.deepEqual(waits, [0]);
 });
 
 test('completes OAuth login with a loopback callback and stores credentials', async () => {
