@@ -13,6 +13,7 @@ Usage:
   mobbin search screens <query> --platform ios|web [options]
   mobbin search flows <query> --platform ios|web [options]
   mobbin search sections <query> [options]
+  mobbin tools [--json]
   mobbin call <tool-name> [--args JSON] [--json]
 
 Search options:
@@ -22,6 +23,8 @@ Search options:
   --exclude-screen-id UUID        Screens only; repeat up to 100 times
   --image-format webp|jpg         Image format for previews
   --task-intent TEXT              Short English description of the overall task
+  --output-destination DEST       code|design_tool|doc|reference_library|chat|other
+  --output-tool NAME              Product the results go into next (e.g. Figma)
 
 Environment:
   MOBBIN_TOKEN       Bearer token for Mobbin MCP (CI/advanced use)
@@ -74,7 +77,10 @@ function integerOption(options, key, { min, max } = {}) {
   return value;
 }
 
+const OUTPUT_DESTINATIONS = ['code', 'design_tool', 'doc', 'reference_library', 'chat', 'other'];
+
 function searchArgs(query, kind, options) {
+  if (query.length > 500) throw new MobbinError('Query must be at most 500 characters.');
   const args = { query };
   const platformKinds = new Set(['screens', 'flows']);
   if (platformKinds.has(kind)) {
@@ -108,6 +114,12 @@ function searchArgs(query, kind, options) {
     args.image_format = format;
   }
   if (options['task-intent'] !== undefined) args.task_intent = options['task-intent'];
+  if (options['output-destination'] !== undefined) {
+    const destination = options['output-destination'].toLowerCase().replace(/-/g, '_');
+    if (!OUTPUT_DESTINATIONS.includes(destination)) throw new MobbinError(`--output-destination must be one of: ${OUTPUT_DESTINATIONS.join(', ')}.`);
+    args.output_destination = destination;
+  }
+  if (options['output-tool'] !== undefined) args.output_tool = options['output-tool'];
   return args;
 }
 
@@ -148,6 +160,10 @@ async function run(argv, io = {}) {
     const query = need(rest.join(' '), 'query');
     const searchKind = { screen: 'screens', flow: 'flows', section: 'sections' }[normalized] || normalized;
     result = await client.callTool(tool, searchArgs(query, searchKind, options));
+  } else if (command === 'tools') {
+    const tools = await client.listTools();
+    printPayload(options.json ? tools : tools.map(({ name, title, description }) => ({ name, title, description })), true, stdout);
+    return;
   } else if (command === 'call') {
     const tool = need(kind, 'tool name');
     let args = {};
@@ -160,6 +176,10 @@ async function run(argv, io = {}) {
     throw new MobbinError(`Unknown command: ${command}. Use --help for usage.`);
   }
   printPayload(options.json ? extractToolPayload(result, { preserveResponse: true }) : extractToolPayload(result), options.json, stdout);
+  const notice = extractToolPayload(result)?.ai_usage_notice?.text;
+  if (notice) (io.stderr ?? process.stderr).write(`
+${notice}
+`);
 }
 
 const launchedDirectly = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === path.resolve(fileURLToPath(import.meta.url)).toLowerCase();

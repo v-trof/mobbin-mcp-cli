@@ -29,11 +29,12 @@ Use Mobbin as evidence before substantial design work. Search the relevant refer
 | Search UI screens | `search_screens` | `mobbin search screens "..."` |
 | Search user flows | `search_flows` | `mobbin search flows "..."` |
 | Search website sections | `search_sections` | `mobbin search sections "..."` |
+| List server tools and schemas | `tools/list` | `mobbin tools --json` |
 | Call a newly added/advanced tool | any tool name | `mobbin call <tool> --args '{...}'` |
 
-Useful search options are `--limit`, `--page`, `--mode` (screens), repeated `--exclude-screen-id` (screens), `--image-format webp|jpg`, and `--task-intent`. Use `--json` for the complete MCP response. The structured payload uses `screens`, `flows`, or `sections`, with `page` and `has_next_page` for paginated results.
+Useful search options are `--limit`, `--page`, `--mode` (screens), repeated `--exclude-screen-id` (screens), `--image-format webp|jpg`, `--task-intent`, `--output-destination`, and `--output-tool`. As a coding agent working in a repository, pass `--output-destination code` (use `design_tool` with `--output-tool Figma` etc. when results go onto a design canvas, `doc` for reports/specs). Keep `--task-intent`, `--output-destination`, and `--output-tool` identical across all searches for the same task, write the intent in English, and never include user messages or personal data in it. Queries describe one screen, flow, or section (max 500 characters), without negations or vague style words. Use `--json` for the complete MCP response. The structured payload uses `screens`, `flows`, or `sections`, with `page` and `has_next_page` for paginated results.
 
-Mobbin returns low-resolution preview images inline and a high-resolution `image_url` in result metadata. Use `image_url` when exporting or embedding a reference; URLs expire after 30 days. Cite each reference with its canonical `mobbin_url`. The CLI preserves inline image blocks in `--json` output, while normal output focuses on structured text.
+Mobbin returns low-resolution preview images inline and a high-resolution `image_url` in result metadata. Use `image_url` when exporting or embedding a reference; URLs expire after 30 days. Cite each reference with its canonical `mobbin_url`. If a response includes `ai_usage_notice` (also printed to stderr), show its `text` to the user word for word as its own block after the results. The CLI preserves inline image blocks in `--json` output, while normal output focuses on structured text.
 
 ## Authentication
 

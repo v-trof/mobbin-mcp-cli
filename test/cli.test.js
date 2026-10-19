@@ -63,14 +63,14 @@ test('maps the documented search commands and generic call', async () => {
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{}' }] } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
   };
   const stdout = { output: '', write(value) { this.output += value; } };
-  await run(['search', 'screens', 'pricing page', '--platform', 'web', '--mode', 'standard', '--limit', '12', '--exclude-screen-id', 'screen-a', '--image-format', 'jpg', '--task-intent', 'Choose a pricing direction'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['search', 'screens', 'pricing page', '--platform', 'web', '--mode', 'standard', '--limit', '12', '--exclude-screen-id', 'screen-a', '--image-format', 'jpg', '--task-intent', 'Choose a pricing direction', '--output-destination', 'code'], { fetchImpl, stdout, promptOnMissingToken: false });
   await run(['search', 'flows', 'signup onboarding', '--platform', 'ios', '--page', '2', '--limit', '3'], { fetchImpl, stdout, promptOnMissingToken: false });
-  await run(['search', 'sections', 'hero section', '--page', '2', '--limit', '4', '--image-format', 'webp'], { fetchImpl, stdout, promptOnMissingToken: false });
+  await run(['search', 'sections', 'hero section', '--page', '2', '--limit', '4', '--image-format', 'webp', '--output-destination', 'design-tool', '--output-tool', 'Figma'], { fetchImpl, stdout, promptOnMissingToken: false });
   await run(['call', 'search_screens', '--args', '{"query":"empty state","platform":"ios"}', '--json'], { fetchImpl, stdout, promptOnMissingToken: false });
   assert.deepEqual(calls.map(({ name }) => name), ['search_screens', 'search_flows', 'search_sections', 'search_screens']);
-  assert.deepEqual(calls[0].arguments, { query: 'pricing page', platform: 'web', mode: 'standard', exclude_screen_ids: ['screen-a'], limit: 12, image_format: 'jpg', task_intent: 'Choose a pricing direction' });
+  assert.deepEqual(calls[0].arguments, { query: 'pricing page', platform: 'web', mode: 'standard', exclude_screen_ids: ['screen-a'], limit: 12, image_format: 'jpg', task_intent: 'Choose a pricing direction', output_destination: 'code' });
   assert.deepEqual(calls[1].arguments, { query: 'signup onboarding', platform: 'ios', limit: 3, page: 2 });
-  assert.deepEqual(calls[2].arguments, { query: 'hero section', limit: 4, page: 2, image_format: 'webp' });
+  assert.deepEqual(calls[2].arguments, { query: 'hero section', limit: 4, page: 2, image_format: 'webp', output_destination: 'design_tool', output_tool: 'Figma' });
   assert.deepEqual(calls[3].arguments, { query: 'empty state', platform: 'ios' });
 });
 
@@ -123,4 +123,30 @@ test('completes OAuth login with a loopback callback and stores credentials', as
     else process.env.MOBBIN_CONFIG_DIR = previousConfigDir;
     await rm(configDir, { recursive: true, force: true });
   }
+});
+
+test('rejects invalid output destinations and overlong queries', async () => {
+  const io = { fetchImpl: async () => { throw new Error('network should not be used'); }, stdout: { write() {} }, promptOnMissingToken: false };
+  await assert.rejects(run(['search', 'sections', 'hero', '--output-destination', 'slack'], io), /--output-destination must be one of/);
+  await assert.rejects(run(['search', 'sections', 'x'.repeat(501)], io), /at most 500 characters/);
+});
+
+test('lists server tools and surfaces AI usage notices', async () => {
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (body.method === 'tools/list') {
+      const page = body.params.cursor
+        ? { tools: [{ name: 'search_flows', title: 'Flows', description: 'f', inputSchema: {} }] }
+        : { tools: [{ name: 'search_screens', title: 'Screens', description: 's', inputSchema: {} }], nextCursor: 'next' };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: page }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
+    }
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { structuredContent: { screens: [], ai_usage_notice: { text: '**Heads up**\nUsage is high.',credits_used: 9 } } } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
+  };
+  const stdout = { output: '', write(value) { this.output += value; } };
+  const stderr = { output: '', write(value) { this.output += value; } };
+  await run(['tools'], { fetchImpl, stdout, promptOnMissingToken: false });
+  assert.deepEqual(JSON.parse(stdout.output).map(({ name }) => name), ['search_screens', 'search_flows']);
+  await run(['search', 'screens', 'login', '--platform', 'ios'], { fetchImpl, stdout: { write() {} }, stderr, promptOnMissingToken: false });
+  assert.equal(stderr.output, '\n**Heads up**\nUsage is high.\n');
 });

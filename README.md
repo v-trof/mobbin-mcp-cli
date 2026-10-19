@@ -41,12 +41,16 @@ mobbin search screens "mobile banking identity verification" --platform ios --li
 mobbin search screens "dark analytics dashboard" --platform web --mode standard --image-format jpg --json
 mobbin search flows "subscription checkout with trial" --platform ios --page 1
 mobbin search sections "SaaS pricing page with annual toggle" --limit 10 --json
+mobbin search screens "settings page" --platform web --output-destination code --output-tool React
+mobbin tools
 mobbin call search_screens --args '{"query":"calendar empty state","platform":"ios"}' --json
 ```
 
-Screens and flows require `--platform ios|web`. Put the app name in the natural-language query; `--app` is not a current MCP argument. Screens support `--mode`, repeated `--exclude-screen-id`, and `--limit`; flows and sections support `--page` and `--limit`. All three searches support `--image-format webp|jpg` and `--task-intent`.
+Screens and flows require `--platform ios|web`. Put the app name in the natural-language query; `--app` is not a current MCP argument. Screens support `--mode`, repeated `--exclude-screen-id`, and `--limit`; flows and sections support `--page` and `--limit`. All three searches support `--image-format webp|jpg`, `--task-intent`, `--output-destination code|design_tool|doc|reference_library|chat|other`, and `--output-tool <product>`. Keep the task intent, destination, and tool the same across every call for one task. Queries are limited to 500 characters.
 
-Searches default to the structured text payload. Add `--json` for the complete MCP tool response, including structured results and inline image blocks. Structured results use `screens`, `flows`, or `sections`; paginated responses also include `page` and `has_next_page`. Each result may include an inline low-resolution preview and a high-resolution `image_url`; image URLs expire after 30 days, so download them when exporting and cite the result's `mobbin_url`.
+`mobbin tools` lists the tools the server currently exposes (`--json` includes full input/output schemas), which is the quickest way to check for contract changes; `mobbin call` reaches any tool or argument the dedicated commands don't cover yet.
+
+Searches default to the structured text payload. Add `--json` for the complete MCP tool response, including structured results and inline image blocks. Structured results use `screens`, `flows`, or `sections`; paginated responses also include `page` and `has_next_page`. Each result may include an inline low-resolution preview and a high-resolution `image_url`; image URLs expire after 30 days, so download them when exporting and cite the result's `mobbin_url`. When Mobbin includes an `ai_usage_notice` (high AI usage), the CLI also prints its markdown text to stderr after the results; show it to the user verbatim.
 
 ## Agent skill
 

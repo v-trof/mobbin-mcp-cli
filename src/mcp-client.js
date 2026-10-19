@@ -1,6 +1,6 @@
 const DEFAULT_URL = 'https://api.mobbin.com/mcp';
 const CLIENT_NAME = 'mobbin-mcp-cli';
-const CLIENT_VERSION = '0.2.0';
+const CLIENT_VERSION = '0.3.0';
 
 export class MobbinError extends Error {
   constructor(message, { status, cause } = {}) {
@@ -112,6 +112,19 @@ export class McpClient {
     const response = await this.request('tools/call', { name, arguments: arguments_ });
     if (response?.error) throw this.rpcError(response.error);
     return response?.result ?? response;
+  }
+
+  async listTools() {
+    await this.initialize();
+    const tools = [];
+    let cursor;
+    do {
+      const response = await this.request('tools/list', cursor ? { cursor } : {});
+      if (response?.error) throw this.rpcError(response.error);
+      tools.push(...(response?.result?.tools ?? []));
+      cursor = response?.result?.nextCursor;
+    } while (cursor);
+    return tools;
   }
 
   headers() {
