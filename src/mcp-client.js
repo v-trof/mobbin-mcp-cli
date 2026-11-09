@@ -1,6 +1,6 @@
 const DEFAULT_URL = 'https://api.mobbin.com/mcp';
 const CLIENT_NAME = 'mobbin-mcp-cli';
-const CLIENT_VERSION = '0.3.0';
+const CLIENT_VERSION = '0.4.0';
 
 export class MobbinError extends Error {
   constructor(message, { status, cause } = {}) {

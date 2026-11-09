@@ -150,3 +150,45 @@ test('lists server tools and surfaces AI usage notices', async () => {
   await run(['search', 'screens', 'login', '--platform', 'ios'], { fetchImpl, stdout: { write() {} }, stderr, promptOnMissingToken: false });
   assert.equal(stderr.output, '\n**Heads up**\nUsage is high.\n');
 });
+
+test('maps collection, save, and comment commands', async () => {
+  const calls = [];
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.method === 'tools/call') calls.push(body.params);
+    if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{}' }] } }), { headers: { 'content-type': 'application/json', 'mcp-session-id': 'test' } });
+  };
+  const io = { fetchImpl, stdout: { write() {} }, promptOnMissingToken: false };
+  const a = '11111111-1111-4111-8111-111111111111';
+  const b = '22222222-2222-4222-8222-222222222222';
+  await run(['collections', 'list', '--output-destination', 'chat'], io);
+  await run(['collections', 'get', 'all-saved', '--type', 'flows', '--platform', 'ios', '--page', '2', '--limit', '5', '--image-format', 'jpg'], io);
+  await run(['collections', 'get', a, '--type', 'section'], io);
+  await run(['collections', 'create', 'Checkout', 'ideas', '--description', 'Payment flows', '--task-intent', 'Design checkout'], io);
+  await run(['save', 'screens', a, `${b}`], io);
+  await run(['save', 'flow', `${a},${b}`, '--collection', b], io);
+  await run(['comment', 'screens', a, 'Good', 'empty', 'state'], io);
+  assert.deepEqual(calls.map(({ name }) => name), ['list_collections', 'get_collection_contents', 'get_collection_contents', 'create_collection', 'save_content', 'save_content', 'add_comment']);
+  assert.deepEqual(calls[0].arguments, { output_destination: 'chat' });
+  assert.deepEqual(calls[1].arguments, { id: 'all-saved', content_type: 'flows', platform: 'ios', page: 2, limit: 5, image_format: 'jpg' });
+  assert.deepEqual(calls[2].arguments, { id: a, content_type: 'sections' });
+  assert.deepEqual(calls[3].arguments, { name: 'Checkout ideas', description: 'Payment flows', task_intent: 'Design checkout' });
+  assert.deepEqual(calls[4].arguments, { collection_id: 'all-saved', contents: [{ id: a, content_type: 'screens' }, { id: b, content_type: 'screens' }] });
+  assert.deepEqual(calls[5].arguments, { collection_id: b, contents: [{ id: a, content_type: 'flows' }, { id: b, content_type: 'flows' }] });
+  assert.deepEqual(calls[6].arguments, { content_id: a, content_type: 'screens', comment: 'Good empty state' });
+});
+
+test('validates collection, save, and comment arguments locally', async () => {
+  const io = { fetchImpl: async () => { throw new Error('network should not be used'); }, stdout: { write() {} }, promptOnMissingToken: false };
+  const a = '11111111-1111-4111-8111-111111111111';
+  await assert.rejects(run(['collections', 'get', 'all-saved', '--type', 'screens'], io), /--platform for screens/);
+  await assert.rejects(run(['collections', 'get', 'all-saved', '--type', 'sections', '--platform', 'web'], io), /only supported for screens and flows/);
+  await assert.rejects(run(['collections', 'get', 'all-saved', '--type', 'flows', '--platform', 'ios', '--limit', '11'], io), /--limit must be an integer from 1 to 10/);
+  await assert.rejects(run(['collections', 'get', 'not-a-uuid', '--type', 'sections'], io), /must be a UUID/);
+  await assert.rejects(run(['collections', 'delete', a], io), /must be list, get, or create/);
+  await assert.rejects(run(['save', 'apps', a], io), /must be screens, flows, or sections/);
+  await assert.rejects(run(['save', 'screens', 'abc'], io), /must be a UUID/);
+  await assert.rejects(run(['save', 'screens', a, '--output-destination', 'code'], io), /not supported for this command/);
+  await assert.rejects(run(['comment', 'screens', a], io), /Missing comment text/);
+});

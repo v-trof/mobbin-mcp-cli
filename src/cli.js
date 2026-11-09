@@ -13,6 +13,11 @@ Usage:
   mobbin search screens <query> --platform ios|web [options]
   mobbin search flows <query> --platform ios|web [options]
   mobbin search sections <query> [options]
+  mobbin collections list
+  mobbin collections get <id|all-saved> --type screens|flows|sections [--platform ios|web] [--page N] [--limit N]
+  mobbin collections create <name> [--description TEXT]
+  mobbin save <screens|flows|sections> <id>... [--collection ID|all-saved]
+  mobbin comment <screens|flows|sections> <id> <text>
   mobbin tools [--json]
   mobbin call <tool-name> [--args JSON] [--json]
 
@@ -25,6 +30,16 @@ Search options:
   --task-intent TEXT              Short English description of the overall task
   --output-destination DEST       code|design_tool|doc|reference_library|chat|other
   --output-tool NAME              Product the results go into next (e.g. Figma)
+
+Collection options:
+  --type screens|flows|sections   collections get: kind of item to fetch (one per call)
+  --platform ios|web              collections get: required for screens and flows
+  --page N                        collections get: page 1-20
+  --limit N                       collections get: 1-30 (flows: 1-10)
+  --description TEXT              collections create: text shown under the name
+  --collection ID|all-saved       save: target collection (default: all-saved)
+  --task-intent, --output-destination, --output-tool and --image-format work as above
+  (save, comment and collections create accept --task-intent only)
 
 Environment:
   MOBBIN_TOKEN       Bearer token for Mobbin MCP (CI/advanced use)
@@ -78,6 +93,67 @@ function integerOption(options, key, { min, max } = {}) {
 }
 
 const OUTPUT_DESTINATIONS = ['code', 'design_tool', 'doc', 'reference_library', 'chat', 'other'];
+const CONTENT_TYPES = ['screens', 'flows', 'sections'];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function contextArgs(options, { destination = true } = {}) {
+  const args = {};
+  if (options['task-intent'] !== undefined) args.task_intent = options['task-intent'];
+  if (!destination) {
+    for (const key of ['output-destination', 'output-tool']) {
+      if (options[key] !== undefined) throw new MobbinError(`--${key} is not supported for this command.`);
+    }
+    return args;
+  }
+  if (options['output-destination'] !== undefined) {
+    const value = options['output-destination'].toLowerCase().replace(/-/g, '_');
+    if (!OUTPUT_DESTINATIONS.includes(value)) throw new MobbinError(`--output-destination must be one of: ${OUTPUT_DESTINATIONS.join(', ')}.`);
+    args.output_destination = value;
+  }
+  if (options['output-tool'] !== undefined) args.output_tool = options['output-tool'];
+  return args;
+}
+
+function imageFormatArg(options) {
+  if (options['image-format'] === undefined) return undefined;
+  const format = options['image-format'].toLowerCase();
+  if (!['webp', 'jpg'].includes(format)) throw new MobbinError('--image-format must be webp or jpg.');
+  return format;
+}
+
+function contentType(value, label = 'content type') {
+  const normalized = need(value, label).toLowerCase();
+  const type = { screen: 'screens', flow: 'flows', section: 'sections' }[normalized] || normalized;
+  if (!CONTENT_TYPES.includes(type)) throw new MobbinError(`${label} must be screens, flows, or sections.`);
+  return type;
+}
+
+function contentId(value, label = 'id') {
+  if (!UUID_PATTERN.test(need(value, label))) throw new MobbinError(`${label} must be a UUID: ${value}`);
+  return value;
+}
+
+function collectionId(value, label = 'collection id') {
+  if (need(value, label) === 'all-saved') return value;
+  return contentId(value, label);
+}
+
+function collectionContentsArgs(id, options) {
+  const type = contentType(options.type, '--type');
+  const args = { id: collectionId(id), content_type: type };
+  if (type === 'sections') {
+    if (options.platform) throw new MobbinError('--platform is only supported for screens and flows.');
+  } else {
+    const platform = need(options.platform, `--platform for ${type}`).toLowerCase();
+    if (!['ios', 'web'].includes(platform)) throw new MobbinError('--platform must be ios or web.');
+    args.platform = platform;
+  }
+  if (options.page !== undefined) args.page = integerOption(options, 'page', { min: 1, max: 20 });
+  if (options.limit !== undefined) args.limit = integerOption(options, 'limit', { min: 1, max: type === 'flows' ? 10 : 30 });
+  const format = imageFormatArg(options);
+  if (format) args.image_format = format;
+  return { ...args, ...contextArgs(options) };
+}
 
 function searchArgs(query, kind, options) {
   if (query.length > 500) throw new MobbinError('Query must be at most 500 characters.');
@@ -108,19 +184,9 @@ function searchArgs(query, kind, options) {
     if (!['flows', 'sections'].includes(kind)) throw new MobbinError('--page is only supported for flows and sections.');
     args.page = integerOption(options, 'page', { min: 1, max: kind === 'flows' ? 20 : Number.MAX_SAFE_INTEGER });
   }
-  if (options['image-format'] !== undefined) {
-    const format = options['image-format'].toLowerCase();
-    if (!['webp', 'jpg'].includes(format)) throw new MobbinError('--image-format must be webp or jpg.');
-    args.image_format = format;
-  }
-  if (options['task-intent'] !== undefined) args.task_intent = options['task-intent'];
-  if (options['output-destination'] !== undefined) {
-    const destination = options['output-destination'].toLowerCase().replace(/-/g, '_');
-    if (!OUTPUT_DESTINATIONS.includes(destination)) throw new MobbinError(`--output-destination must be one of: ${OUTPUT_DESTINATIONS.join(', ')}.`);
-    args.output_destination = destination;
-  }
-  if (options['output-tool'] !== undefined) args.output_tool = options['output-tool'];
-  return args;
+  const format = imageFormatArg(options);
+  if (format) args.image_format = format;
+  return { ...args, ...contextArgs(options) };
 }
 
 async function run(argv, io = {}) {
@@ -160,6 +226,35 @@ async function run(argv, io = {}) {
     const query = need(rest.join(' '), 'query');
     const searchKind = { screen: 'screens', flow: 'flows', section: 'sections' }[normalized] || normalized;
     result = await client.callTool(tool, searchArgs(query, searchKind, options));
+  } else if (command === 'collections' || command === 'collection') {
+    const action = kind?.toLowerCase();
+    if (action === 'list' || action === 'ls') {
+      if (rest.length) throw new MobbinError('collections list takes no positional arguments.');
+      result = await client.callTool('list_collections', contextArgs(options));
+    } else if (action === 'get') {
+      if (rest.length !== 1) throw new MobbinError('collections get needs exactly one id (a collection UUID or all-saved).');
+      result = await client.callTool('get_collection_contents', collectionContentsArgs(rest[0], options));
+    } else if (action === 'create') {
+      const args = { name: need(rest.join(' '), 'collection name') };
+      if (options.description !== undefined) args.description = options.description;
+      result = await client.callTool('create_collection', { ...args, ...contextArgs(options, { destination: false }) });
+    } else {
+      throw new MobbinError('Collections command must be list, get, or create.');
+    }
+  } else if (command === 'save') {
+    const type = contentType(kind);
+    if (!rest.length) throw new MobbinError('Missing item id(s) to save.');
+    const ids = rest.flatMap((value) => value.split(',').map((item) => item.trim()).filter(Boolean));
+    result = await client.callTool('save_content', {
+      collection_id: collectionId(options.collection ?? 'all-saved', '--collection'),
+      contents: ids.map((id) => ({ id: contentId(id), content_type: type })),
+      ...contextArgs(options, { destination: false })
+    });
+  } else if (command === 'comment') {
+    const type = contentType(kind);
+    const [id, ...words] = rest;
+    const comment = need(words.join(' '), 'comment text');
+    result = await client.callTool('add_comment', { content_id: contentId(id), content_type: type, comment, ...contextArgs(options, { destination: false }) });
   } else if (command === 'tools') {
     const tools = await client.listTools();
     printPayload(options.json ? tools : tools.map(({ name, title, description }) => ({ name, title, description })), true, stdout);

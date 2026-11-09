@@ -1,6 +1,6 @@
 # Mobbin CLI
 
-`mobbin` is a small command-line client for Mobbin's official hosted MCP server. It exposes Mobbin's searchable UI screens, multi-step flows, and website sections to terminals, scripts, and design-oriented agents.
+`mobbin` is a small command-line client for Mobbin's official hosted MCP server. It exposes Mobbin's searchable UI screens, multi-step flows, and website sections, plus your saved items and collections, to terminals, scripts, and design-oriented agents.
 
 Mobbin's MCP server is remote; there is no local server package to install. The CLI uses Streamable HTTP and the same OAuth authorization flow as supported MCP clients.
 
@@ -42,11 +42,37 @@ mobbin search screens "dark analytics dashboard" --platform web --mode standard 
 mobbin search flows "subscription checkout with trial" --platform ios --page 1
 mobbin search sections "SaaS pricing page with annual toggle" --limit 10 --json
 mobbin search screens "settings page" --platform web --output-destination code --output-tool React
+mobbin collections list
+mobbin collections get all-saved --type screens --platform ios --limit 20
+mobbin collections get <collection-uuid> --type sections --page 2
+mobbin collections create "Checkout references" --description "Payment step ideas"
+mobbin save screens <screen-uuid> <screen-uuid> --collection <collection-uuid>
+mobbin comment flows <flow-uuid> "Good trial-to-paid handoff"
 mobbin tools
 mobbin call search_screens --args '{"query":"calendar empty state","platform":"ios"}' --json
 ```
 
 Screens and flows require `--platform ios|web`. Put the app name in the natural-language query; `--app` is not a current MCP argument. Screens support `--mode`, repeated `--exclude-screen-id`, and `--limit`; flows and sections support `--page` and `--limit`. All three searches support `--image-format webp|jpg`, `--task-intent`, `--output-destination code|design_tool|doc|reference_library|chat|other`, and `--output-tool <product>`. Keep the task intent, destination, and tool the same across every call for one task. Queries are limited to 500 characters.
+
+## Collections, saving, and comments
+
+| Command | MCP tool |
+|---|---|
+| `mobbin collections list` | `list_collections` |
+| `mobbin collections get <id\|all-saved> --type screens\|flows\|sections` | `get_collection_contents` |
+| `mobbin collections create <name> [--description TEXT]` | `create_collection` |
+| `mobbin save <type> <id>... [--collection ID\|all-saved]` | `save_content` |
+| `mobbin comment <type> <id> <text>` | `add_comment` |
+
+- `collections get` fetches one kind per call. Screens and flows need `--platform ios|web`. `--page` is 1-20. `--limit` is 1-30 (flows: 1-10). Keep `--limit` the same on every page.
+- `all-saved` holds every save. Use it to find one saved item.
+- `save` defaults to `all-saved`. Saving to a collection also saves to All saved. It is all or nothing and safe to repeat. Ids can be space- or comma-separated.
+- `comment` posts a new comment on each call. Mobbin adds the app name, so do not sign it. `@mentions` do not notify anyone.
+- New collections are private to you and your team.
+- Ids must be UUIDs from search results, collection contents, or Mobbin links. Never guess them.
+- `list`/`get` accept `--task-intent`, `--output-destination`, `--output-tool`. `create`, `save`, and `comment` accept `--task-intent` only.
+
+## Contract checks
 
 `mobbin tools` lists the tools the server currently exposes (`--json` includes full input/output schemas), which is the quickest way to check for contract changes; `mobbin call` reaches any tool or argument the dedicated commands don't cover yet.
 

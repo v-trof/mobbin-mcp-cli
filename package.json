@@ -1,6 +1,6 @@
 {
   "name": "mobbin-mcp-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A focused command-line client for Mobbin MCP design research.",
   "type": "module",
   "bin": {
