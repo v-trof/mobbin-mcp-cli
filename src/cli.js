@@ -1,15 +1,19 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { McpClient, MobbinError, DEFAULT_URL, extractToolPayload } from './mcp-client.js';
 import { authPath, clearAuth, getStoredAuth, getValidAccessToken, login } from './auth.js';
+import { DEFAULT_SKILL, installSkills, listSkills, readSkill } from './skills.js';
+import { drawSeeds, formatSeeds } from './seeds.js';
 
 const HELP = `Mobbin CLI — real-world UI references from your terminal
 
 Usage:
   mobbin auth login|status|logout
-  mobbin skill
+  mobbin skill [name] [--ref FILE]
+  mobbin skill list
+  mobbin skill install [names...] --target claude|agents|codex [--project] [--dir PATH] [--force]
+  mobbin seeds [--count N] [--seed S] [--avoid ID,ID]
   mobbin search screens <query> --platform ios|web [options]
   mobbin search flows <query> --platform ios|web [options]
   mobbin search sections <query> [options]
@@ -41,6 +45,18 @@ Collection options:
   --task-intent, --output-destination, --output-tool and --image-format work as above
   (save, comment and collections create accept --task-intent only)
 
+Skill options:
+  --ref FILE         Print one of the skill's reference files
+  --target NAME      claude (~/.claude/skills), agents (~/.agents/skills), codex ($CODEX_HOME/skills)
+  --project          Install into ./.claude/skills (claude) or ./.agents/skills (agents, codex)
+  --dir PATH         Install into PATH instead
+  --force            Replace an existing skill folder that mobbin did not install
+
+Seed options:
+  --count N          Directions to draw (1-8, default 4); the last is wild when N is 3 or more
+  --seed S           Reproduce an earlier draw
+  --avoid ID,ID      Leave out deck options by id, e.g. to redraw one axis
+
 Environment:
   MOBBIN_TOKEN       Bearer token for Mobbin MCP (CI/advanced use)
   MOBBIN_MCP_URL     MCP endpoint (default: ${DEFAULT_URL})
@@ -60,7 +76,7 @@ function parseArgs(argv) {
     if (item === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (item.startsWith('--')) {
       const [key, inline] = item.slice(2).split('=', 2);
-      if (['json', 'help'].includes(key)) options[key] = true;
+      if (['json', 'help', 'project', 'force'].includes(key)) options[key] = true;
       else {
         const value = inline ?? argv[++i];
         if (!value || value.startsWith('--')) throw new MobbinError(`Missing value for --${key}`);
@@ -195,8 +211,23 @@ async function run(argv, io = {}) {
   if (options.help || positional.length === 0 || positional[0] === 'help') { stdout.write(HELP); return; }
   const [command, kind, ...rest] = positional;
   if (command === 'skill') {
-    const content = await readFile(new URL('../skill/SKILL.md', import.meta.url), 'utf8');
-    printPayload(options.json ? { name: 'mobbin-design', content } : content, options.json, stdout);
+    if (kind === 'list') {
+      const skills = await listSkills();
+      printPayload(options.json ? skills : skills.map(({ name, description }) => `${name}\n  ${description}`).join('\n\n'), options.json, stdout);
+    } else if (kind === 'install') {
+      const { installed } = await installSkills(rest, options, io.cwd);
+      printPayload(options.json ? installed : installed.map(({ name, path: dest }) => `Installed ${name} at ${dest}`).join('\n'), options.json, stdout);
+    } else {
+      const name = kind ?? DEFAULT_SKILL;
+      const content = await readSkill(name, options.ref);
+      printPayload(options.json ? { name, ...(options.ref ? { ref: options.ref } : {}), content } : content, options.json, stdout);
+    }
+    return;
+  }
+  if (command === 'seeds') {
+    const avoid = (options.avoid ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+    const draw = await drawSeeds({ count: integerOption(options, 'count', { min: 1, max: 8 }), seed: options.seed, avoid });
+    printPayload(options.json ? draw : formatSeeds(draw), options.json, stdout);
     return;
   }
   if (command === 'auth') {

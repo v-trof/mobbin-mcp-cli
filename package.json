@@ -1,7 +1,7 @@
 {
   "name": "mobbin-mcp-cli",
   "version": "0.4.0",
-  "description": "A focused command-line client for Mobbin MCP design research.",
+  "description": "A focused command-line client for Mobbin MCP design research, with bundled design skills.",
   "type": "module",
   "bin": {
     "mobbin": "bin/mobbin.js"
@@ -9,14 +9,15 @@
   "files": [
     "bin",
     "src",
-    "skill",
+    "skills",
+    "seeds",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
     "start": "node src/cli.js",
-    "validate:skill": "python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skill"
+    "validate:skills": "python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/mobbin-design && python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/design-floor && python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/design-redesign && python C:/Users/v-trof/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/design-explore"
   },
   "engines": {
     "node": ">=18"
@@ -29,7 +30,9 @@
     "mobbin",
     "mcp",
     "design-research",
-    "cli"
+    "cli",
+    "design-skills",
+    "agent-skills"
   ],
   "license": "MIT"
 }

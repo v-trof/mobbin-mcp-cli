@@ -37,6 +37,7 @@ $env:MOBBIN_TOKEN = "your-access-token"
 
 ```sh
 mobbin skill > SKILL.md
+mobbin skill install --target claude
 mobbin search screens "mobile banking identity verification" --platform ios --limit 10
 mobbin search screens "dark analytics dashboard" --platform web --mode standard --image-format jpg --json
 mobbin search flows "subscription checkout with trial" --platform ios --page 1
@@ -78,9 +79,41 @@ Screens and flows require `--platform ios|web`. Put the app name in the natural-
 
 Searches default to the structured text payload. Add `--json` for the complete MCP tool response, including structured results and inline image blocks. Structured results use `screens`, `flows`, or `sections`; paginated responses also include `page` and `has_next_page`. Each result may include an inline low-resolution preview and a high-resolution `image_url`; image URLs expire after 30 days, so download them when exporting and cite the result's `mobbin_url`. When Mobbin includes an `ai_usage_notice` (high AI usage), the CLI also prints its markdown text to stderr after the results; show it to the user verbatim.
 
-## Agent skill
+## Agent skills
 
-`mobbin skill` prints the bundled `mobbin-design` skill. It teaches an agent to research multiple Mobbin references, lock a distinct direction, and validate implementation against that research before substantial design work.
+The package bundles four skills. `mobbin skill list` shows them, `mobbin skill <name>` prints one, and `mobbin skill` alone still prints `mobbin-design`.
+
+| Skill | Use |
+|---|---|
+| `mobbin-design` | Research Mobbin references, lock a distinct direction, and check the build against it. |
+| `design-floor` | Rules for any UI edit that models break by default: copy that explains the interface, `title` tooltips and hand-rolled popovers, landing-page layouts inside apps, entrance animations, unstable geometry. |
+| `design-redesign` | One screen or component in an existing app: `fix` reworks it in place, `variants` builds three alternatives in the app's own visual world that differ in structure. |
+| `design-explore` | Divergent directions with one fresh-context agent per seed and a distinctness gate. Runs only when the user asks for it. |
+
+The skills load each other through the CLI (`mobbin skill design-floor`, `mobbin skill design-redesign --ref fix.md`), so they work wherever `mobbin` is on the PATH, whatever the install location.
+
+Install them into an agent harness:
+
+```sh
+mobbin skill install --target claude              # ~/.claude/skills
+mobbin skill install --target agents --project    # ./.agents/skills
+mobbin skill install design-floor --target codex  # $CODEX_HOME/skills, default ~/.codex/skills
+mobbin skill install --dir ./somewhere/skills
+```
+
+Pass skill names to install a subset. `design-explore` is marked user-invoked: the `claude` target adds `disable-model-invocation: true` to its frontmatter, and the other targets write `agents/openai.yaml` with `allow_implicit_invocation: false`. Each installed folder gets a `.mobbin-skill.json` marker, and reinstalling replaces marked folders. An existing folder without the marker is left alone unless you pass `--force`.
+
+### Design seeds
+
+`design-explore` draws its directions with `mobbin seeds`, which samples a curated deck in code. Asked for distinct directions, models keep landing on the same few looks. Each direction gets a structure, an interaction model, a source world from outside software, a density, a colour strategy and a type voice. No two directions in one draw share a structure or a world, and when three or more are drawn, the last also gets a wild twist.
+
+```sh
+mobbin seeds --count 4
+mobbin seeds --count 4 --seed 482113 --json         # reproduce a draw
+mobbin seeds --count 1 --avoid ledger,blueprint     # redraw while excluding used options
+```
+
+The deck lives in [seeds/deck.json](seeds/deck.json).
 
 ## Development
 

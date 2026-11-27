@@ -1,11 +1,21 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { extractToolPayload, McpClient } from '../src/mcp-client.js';
 import { parseArgs, run } from '../src/cli.js';
 import { getStoredAuth, login, PROTECTED_RESOURCE_METADATA } from '../src/auth.js';
+import { INSTALL_MARKER, readSkill } from '../src/skills.js';
+import { AXES, drawSeeds } from '../src/seeds.js';
+
+// Keep the developer's saved Mobbin login out of the tests; an expired one would trigger a refresh through the mocked fetch.
+const configDir = await mkdtemp(join(tmpdir(), 'mobbin-config-'));
+process.env.MOBBIN_CONFIG_DIR = configDir;
+after(() => rm(configDir, { recursive: true, force: true }));
+
+const offline = () => ({ stdout: { output: '', write(value) { this.output += value; } }, fetchImpl: async () => { throw new Error('network should not be used'); } });
+const exists = (file) => stat(file).then(() => true, () => false);
 
 test('parses positional arguments and long options', () => {
   const parsed = parseArgs(['search', 'screens', 'pricing', 'page', '--platform', 'web', '--json']);
@@ -19,11 +29,113 @@ test('parses positional arguments and long options', () => {
 test('returns the bundled agent skill without a network request', async () => {
   const stdout = { output: '', write(value) { this.output += value; } };
   await run(['skill'], { stdout, fetchImpl: async () => { throw new Error('network should not be used'); } });
-  assert.match(stdout.output, /^---\nname: mobbin-design/);
+  assert.match(stdout.output, /^---\r?\nname: mobbin-design/);
   assert.match(stdout.output, /mobbin search screens/);
   assert.match(stdout.output, /synthesize a distinct result/);
   assert.match(stdout.output, /image-format/);
   assert.match(stdout.output, /mobbin_url/);
+});
+
+test('lists bundled skills and prints a skill or one of its references', async () => {
+  const io = offline();
+  await run(['skill', 'list', '--json'], io);
+  const skills = JSON.parse(io.stdout.output);
+  assert.deepEqual(skills.map(({ name }) => name), ['design-explore', 'design-floor', 'design-redesign', 'mobbin-design']);
+  assert.deepEqual(skills.filter(({ userInvoked }) => userInvoked).map(({ name }) => name), ['design-explore']);
+  assert.ok(skills.every(({ description }) => description && !/[<>]/.test(description)));
+
+  const floor = offline();
+  await run(['skill', 'design-floor'], floor);
+  assert.match(floor.stdout.output, /^---\r?\nname: design-floor/);
+  const fix = offline();
+  await run(['skill', 'design-redesign', '--ref', 'fix', '--json'], fix);
+  assert.deepEqual(Object.keys(JSON.parse(fix.stdout.output)), ['name', 'ref', 'content']);
+  assert.match(JSON.parse(fix.stdout.output).content, /^# Fix mode/);
+
+  await assert.rejects(run(['skill', 'nope'], offline()), /Unknown skill: nope/);
+  await assert.rejects(run(['skill', 'design-redesign', '--ref', 'missing.md'], offline()), /Available: fix.md, variants.md/);
+  await assert.rejects(run(['skill', 'design-redesign', '--ref', '../SKILL.md'], offline()), /has no reference/);
+});
+
+test('every mobbin skill command referenced inside the skills resolves', async () => {
+  const skillsDir = new URL('../skills/', import.meta.url);
+  const files = [];
+  for (const name of await readdir(skillsDir)) {
+    files.push(new URL(`${name}/SKILL.md`, skillsDir));
+    const refs = await readdir(new URL(`${name}/references/`, skillsDir)).catch(() => []);
+    files.push(...refs.map((ref) => new URL(`${name}/references/${ref}`, skillsDir)));
+  }
+  const commands = new Set();
+  for (const file of files) {
+    for (const [, name, ref] of (await readFile(file, 'utf8')).matchAll(/mobbin skill ([a-z][a-z-]+)(?: --ref ([\w.-]+))?/g)) {
+      if (!['list', 'install'].includes(name)) commands.add(JSON.stringify([name, ref]));
+    }
+  }
+  assert.ok(commands.size >= 5);
+  for (const command of commands) {
+    const [name, ref] = JSON.parse(command);
+    await assert.doesNotReject(readSkill(name, ref ?? undefined), `mobbin skill ${name}${ref ? ` --ref ${ref}` : ''}`);
+  }
+});
+
+test('installs skills with a marker and per-harness user-only invocation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mobbin-skills-'));
+  try {
+    const io = offline();
+    await run(['skill', 'install', '--dir', join(root, 'agents'), '--json'], io);
+    assert.equal(JSON.parse(io.stdout.output).length, 4);
+    assert.ok(await exists(join(root, 'agents', 'design-redesign', 'references', 'variants.md')));
+    assert.ok(await exists(join(root, 'agents', 'design-floor', INSTALL_MARKER)));
+    assert.equal(await readFile(join(root, 'agents', 'design-explore', 'agents', 'openai.yaml'), 'utf8'), 'policy:\n  allow_implicit_invocation: false\n');
+    assert.equal(await exists(join(root, 'agents', 'design-floor', 'agents', 'openai.yaml')), false);
+
+    await run(['skill', 'install', 'design-explore', 'design-floor', '--target', 'claude', '--dir', join(root, 'claude')], offline());
+    assert.match(await readFile(join(root, 'claude', 'design-explore', 'SKILL.md'), 'utf8'), /^---\r?\nname: design-explore\r?\n[\s\S]*\r?\ndisable-model-invocation: true\r?\n---\r?\n/);
+    assert.doesNotMatch(await readFile(join(root, 'claude', 'design-floor', 'SKILL.md'), 'utf8'), /disable-model-invocation/);
+    assert.equal(await exists(join(root, 'claude', 'design-redesign')), false);
+
+    // A managed folder is replaced on reinstall; stale files from older versions go away.
+    await writeFile(join(root, 'claude', 'design-floor', 'stale.md'), 'old');
+    await run(['skill', 'install', 'design-floor', '--target', 'claude', '--dir', join(root, 'claude')], offline());
+    assert.equal(await exists(join(root, 'claude', 'design-floor', 'stale.md')), false);
+
+    // A folder mobbin didn't install is left alone unless --force, and nothing else is written first.
+    await mkdir(join(root, 'mine', 'design-redesign'), { recursive: true });
+    await writeFile(join(root, 'mine', 'design-redesign', 'SKILL.md'), 'custom');
+    await assert.rejects(run(['skill', 'install', '--dir', join(root, 'mine')], offline()), /was not installed by mobbin/);
+    assert.equal(await exists(join(root, 'mine', 'design-floor')), false);
+    assert.equal(await readFile(join(root, 'mine', 'design-redesign', 'SKILL.md'), 'utf8'), 'custom');
+    await run(['skill', 'install', 'design-redesign', '--dir', join(root, 'mine'), '--force'], offline());
+    assert.ok(await exists(join(root, 'mine', 'design-redesign', INSTALL_MARKER)));
+
+    await assert.rejects(run(['skill', 'install'], offline()), /Pass --target/);
+    await assert.rejects(run(['skill', 'install', '--target', 'cursor'], offline()), /--target must be one of/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('draws reproducible, orthogonal design seeds', async () => {
+  const first = await drawSeeds({ count: 5, seed: 'brief-1' });
+  assert.deepEqual(await drawSeeds({ count: 5, seed: 'brief-1' }), first);
+  assert.notDeepEqual((await drawSeeds({ count: 5, seed: 'brief-2' })).directions, first.directions);
+  assert.deepEqual(first.directions.map(({ id }) => id), ['A', 'B', 'C', 'D', 'E']);
+  for (const axis of AXES) assert.ok(first.directions.every((direction) => direction[axis].id && direction[axis].prompt), axis);
+  for (const axis of ['structure', 'world']) assert.equal(new Set(first.directions.map((direction) => direction[axis].id)).size, 5, axis);
+  assert.deepEqual(first.directions.map(({ wild }) => Boolean(wild)), [false, false, false, false, true]);
+  assert.equal((await drawSeeds({ count: 2, seed: 'x' })).directions.some(({ wild }) => wild), false);
+
+  const used = first.directions.map(({ world }) => world.id);
+  const redraw = await drawSeeds({ count: 1, seed: 'brief-1', avoid: used });
+  assert.ok(!used.includes(redraw.directions[0].world.id));
+  await assert.rejects(drawSeeds({ avoid: ['not-an-id'] }), /Unknown --avoid id: not-an-id/);
+
+  const io = offline();
+  await run(['seeds', '--count', '3', '--seed', '42', '--avoid', 'ledger'], io);
+  assert.match(io.stdout.output, /^Seed 42\. Reproduce with: mobbin seeds --count 3 --seed 42 --avoid ledger\n\nA\n  Structure /);
+  assert.match(io.stdout.output, /\nC \(wild\)\n[\s\S]*  Twist /);
+  assert.doesNotMatch(io.stdout.output, /\(ledger\)/);
+  await assert.rejects(run(['seeds', '--count', '9'], offline()), /--count must be an integer from 1 to 8/);
 });
 
 test('extracts structured content, JSON text, and plain text', () => {
